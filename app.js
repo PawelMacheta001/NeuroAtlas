@@ -882,13 +882,19 @@
         <div class="path-grid">
           ${data.learning_paths.map(path => {
             const p = pathProgress(path);
-            return `<a class="cover-card" href="#/path/${encodeURIComponent(path.id)}">
-              <img class="course-cover-thumb" src="${courseCover(path)}" alt="Okładka kursu ${esc(path.title)}" />
+            const actionLabel = p.pct >= 100 ? 'Przejrzyj kurs' : p.count > 0 ? 'Kontynuuj kurs' : 'Otwórz kurs';
+            return `<article class="cover-card course-card">
+              <a class="course-card-media" href="#/path/${encodeURIComponent(path.id)}" aria-label="${esc(actionLabel)}: ${esc(path.title)}">
+                <img class="course-cover-thumb" src="${courseCover(path)}" alt="Okładka kursu ${esc(path.title)}" />
+              </a>
               <div class="kicker">${p.count}/${path.steps.length} kroków</div>
               <h3>${esc(path.title)}</h3>
               <p>${esc(path.description)}</p>
-              <div class="meta-line"><span class="pill"><strong>${p.pct}%</strong> ukończone</span></div>
-            </a>`;
+              <div class="course-card-footer">
+                <div class="meta-line"><span class="pill"><strong>${p.pct}%</strong> ukończone</span></div>
+                <a class="button course-open-button" href="#/path/${encodeURIComponent(path.id)}">${actionLabel}<span aria-hidden="true">→</span></a>
+              </div>
+            </article>`;
           }).join('')}
         </div>
       </div>`;
@@ -919,10 +925,14 @@
             return `<article class="path-step card">
               <img class="simple-topic-thumb" src="${simpleConceptThumb(c)}" alt="Miniatura kroku ${idx+1} ${esc(c.title)}" />
               <div class="step-body">
-                <div class="step-top"><div style="display:flex;gap:12px;align-items:center"><div class="step-index">${idx+1}</div><div class="kicker">${esc(catTitle(c.category))}</div></div><button class="toggle-done ${done ? 'done' : ''}" data-path="${esc(path.id)}" data-step="${esc(stepId)}">${done ? 'Ukończone' : 'Oznacz jako zrobione'}</button></div>
-                <h3><a href="#/concept/${encodeURIComponent(c.id)}">${esc(c.title)}</a></h3>
+                <div class="step-top"><div style="display:flex;gap:12px;align-items:center"><div class="step-index">${idx+1}</div><div class="kicker">${esc(catTitle(c.category))}</div></div></div>
+                <h3>${esc(c.title)}</h3>
                 <p>${esc(textBlock(c))}</p>
                 <div class="meta-line"><span class="pill">Poziom <strong>${c.difficulty}</strong></span><span class="pill">Cannabis <strong>${esc(cannabisLabel(c.cannabis_relevance))}</strong></span></div>
+                <div class="course-step-actions">
+                  <a class="button course-lesson-button" href="#/concept/${encodeURIComponent(c.id)}">${done ? 'Przejrzyj lekcję' : 'Otwórz lekcję'}<span aria-hidden="true">→</span></a>
+                  <button class="toggle-done ${done ? 'done' : ''}" data-path="${esc(path.id)}" data-step="${esc(stepId)}">${done ? 'Ukończone ✓' : 'Oznacz jako ukończone'}</button>
+                </div>
               </div>
             </article>`;
           }).join('')}

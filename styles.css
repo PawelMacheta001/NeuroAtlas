@@ -667,3 +667,65 @@ img{display:block;max-width:100%}
   .search-hit{padding:12px 13px}
   .search-hit-top>span{display:none}
 }
+
+
+/* V10.7 — clearer course actions + restrained motion system */
+html{scroll-behavior:smooth}
+
+.course-card{align-content:start}
+.course-card-media{display:block;overflow:hidden;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+.course-card-media .course-cover-thumb{transition:transform .22s cubic-bezier(.2,.7,.2,1),filter .22s ease}
+.course-card-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:auto;padding-top:2px}
+.course-open-button,.course-lesson-button{min-height:42px;padding-inline:14px;font-size:12px;white-space:nowrap;transition:transform .16s ease,filter .16s ease,box-shadow .16s ease}
+.course-open-button span,.course-lesson-button span{font-size:16px;line-height:1;transition:transform .16s ease}
+.course-step-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px}
+.course-step-actions .toggle-done{margin-left:auto}
+.path-step h3{margin:0;font-size:20px}
+
+/* Page changes should feel responsive, not theatrical. */
+.page>.stack{animation:na-view-in .22s cubic-bezier(.2,.75,.25,1) both}
+@keyframes na-view-in{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+
+/* Small stagger makes lists readable while keeping total motion under ~300 ms. */
+.path-grid>.course-card,.path-step-list>.path-step{animation:na-card-in .24s cubic-bezier(.2,.75,.25,1) both}
+.path-grid>:nth-child(2),.path-step-list>:nth-child(2){animation-delay:25ms}
+.path-grid>:nth-child(3),.path-step-list>:nth-child(3){animation-delay:50ms}
+.path-grid>:nth-child(4),.path-step-list>:nth-child(4){animation-delay:75ms}
+.path-grid>:nth-child(5),.path-step-list>:nth-child(5){animation-delay:100ms}
+.path-grid>:nth-child(n+6),.path-step-list>:nth-child(n+6){animation-delay:120ms}
+@keyframes na-card-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.button,.button-secondary,.toggle-done,.link-chip,.related-card,.source-card,.cover-card,.topic-card,.path-step,.mini-card,.profiler-disclosure>summary,.graph-quick-open{
+  transition:transform .16s ease,border-color .16s ease,background-color .16s ease,box-shadow .18s ease,filter .16s ease,opacity .16s ease;
+}
+.progress-track span{transition:width .48s cubic-bezier(.2,.75,.25,1)}
+.profiler-disclosure[open]>.profiler-disclosure-body{animation:na-disclosure-in .18s ease both}
+@keyframes na-disclosure-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.search-results:not([hidden]){animation:na-pop-in .15s ease-out both}
+@keyframes na-pop-in{from{opacity:0;transform:translateY(-4px) scale(.995)}to{opacity:1;transform:none}}
+
+@media(hover:hover) and (pointer:fine){
+  .course-card:hover,.topic-card:hover,.path-step:hover,.related-card:hover,.source-card:hover{transform:translateY(-2px);border-color:var(--line-strong)}
+  .course-card:hover .course-card-media .course-cover-thumb{transform:scale(1.012);filter:brightness(1.035)}
+  .course-open-button:hover,.course-lesson-button:hover,.button:hover{filter:brightness(1.035);box-shadow:0 8px 22px rgba(137,247,173,.10)}
+  .course-open-button:hover span,.course-lesson-button:hover span{transform:translateX(2px)}
+  .toggle-done:hover,.button-secondary:hover{background:rgba(255,255,255,.065);border-color:var(--line-strong)}
+  .main-nav a:hover{transform:translateY(-1px)}
+}
+.button:active,.button-secondary:active,.toggle-done:active,.course-open-button:active,.course-lesson-button:active{transform:translateY(1px) scale(.99)}
+
+@media(max-width:700px){
+  .course-card-footer{align-items:stretch;flex-direction:column}
+  .course-card-footer .meta-line{order:1}
+  .course-card-footer .course-open-button{order:2;width:100%;justify-content:center}
+  .course-step-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .course-step-actions .button,.course-step-actions .toggle-done{width:100%;min-height:44px;margin:0;justify-content:center;text-align:center;padding-inline:10px}
+}
+@media(max-width:430px){
+  .course-step-actions{grid-template-columns:1fr}
+}
+
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}

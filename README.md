@@ -1,6 +1,6 @@
-# NeuroAtlas V10.6 — UX Complete
+# NeuroAtlas V10.7 — Smooth Courses
 
-Ta wersja rozwija V10.5 bez zmiany kierunku wizualnego.
+Ta wersja rozwija V10.6 bez zmiany kierunku wizualnego i skupia się na czytelności kursów oraz subtelnych mikroanimacjach.
 
 Najważniejsze ulepszenia:
 - feedback bez sztucznego domyślnego 5/10 — do modelu trafiają tylko świadomie ocenione wymiary,
@@ -12,4 +12,11 @@ Najważniejsze ulepszenia:
 
 Uruchamianie:
 - `index.html` — wersja projektowa,
-- `NeuroAtlas_V10_6_OPEN_THIS.html` — wersja standalone.
+- `NeuroAtlas_V10_7_OPEN_THIS.html` — wersja standalone.
+
+
+## V10.7
+- Jawne przyciski Otwórz/Kontynuuj kurs na kartach kursów.
+- Jawny przycisk Otwórz lekcję przy każdym kroku; ukończenie jest osobną akcją.
+- Subtelny system mikroanimacji (wejścia widoków i kart, hover/tap, progress, disclosure, search).
+- Respektuje `prefers-reduced-motion`.
