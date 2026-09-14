@@ -1,16 +1,15 @@
-# NeuroAtlas V10
+# NeuroAtlas V10.6 — UX Complete
 
-Wersja rozwijająca V9 o osobisty **Profiler działania cannabis**.
+Ta wersja rozwija V10.5 bez zmiany kierunku wizualnego.
 
-## Nowe w V10
-- formularz składu: THC/THCA, CBD/CBDA, CBG, CBN, terpeny
-- droga podania, metoda, tolerancja i kontekst
-- predykcja jako zakres + poziom pewności, nie jedna pozornie precyzyjna liczba
-- lokalna historia sesji
-- formularz "Jak było naprawdę?"
-- personalizacja kolejnych predykcji na podstawie podobnych wcześniejszych sesji
-- eksport historii do JSON
+Najważniejsze ulepszenia:
+- feedback bez sztucznego domyślnego 5/10 — do modelu trafiają tylko świadomie ocenione wymiary,
+- formularz chemii bez fałszywych wartości startowych; puste = brak danych, z walidacją sumy kannabinoidów i jednostek,
+- terpeny rozróżniają „nie znam profilu” od rzeczywistego 0%; profil laboratoryjny można jawnie włączyć,
+- mapa ma jednoznaczny przycisk „Otwórz temat” po wyborze węzła, lepszy dotyk i obsługę klawiatury,
+- wyszukiwarka ma ranking trafności, tolerancję literówek, fragment opisu, podświetlenie i nawigację klawiaturą,
+- zachowane ulepszenia V10.5: kompaktowy wynik, płynna tolerancja, osobne zakresy niepewności, personalizacja i zaufanie do wyniku.
 
-Profiler jest edukacyjnym modelem heurystycznym. Nie służy do ustalania bezpiecznej dawki, prowadzenia pojazdu ani planowania mieszania substancji.
-
-Uruchom `index.html`.
+Uruchamianie:
+- `index.html` — wersja projektowa,
+- `NeuroAtlas_V10_6_OPEN_THIS.html` — wersja standalone.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0b0f0d" />
   <meta name="description" content="NeuroAtlas — wizualna encyklopedia neurofarmakologii i cannabis." />
-  <title>NeuroAtlas V10 — Profiler</title>
+  <title>NeuroAtlas V10.6 — neurofarmakologia i Profiler</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -20,12 +20,17 @@
     <span class="bg-icon spark">✦</span>
   </div>
   <header class="topbar">
-    <a class="brand" href="#/">
-      <div class="brand-mark">✦</div>
-      <div>
-        <div class="brand-title">NeuroAtlas <span class="version-badge">V10</span></div>
-        <div class="brand-sub">wizualna baza wiedzy • mechanizm → efekt</div>
-      </div>
+    <a class="brand" href="#/" aria-label="NeuroAtlas — strona główna">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 48 48" focusable="false">
+          <path class="logo-frame" d="M6 11.5 15.5 5h17L42 11.5v25L32.5 43h-17L6 36.5z"/>
+          <path class="logo-n" d="M15 33V15l18 18V15"/>
+          <circle class="logo-node" cx="15" cy="15" r="2.6"/>
+          <circle class="logo-node" cx="33" cy="15" r="2.6"/>
+          <circle class="logo-node hot" cx="33" cy="33" r="2.9"/>
+        </svg>
+      </span>
+      <span class="brand-title">NeuroAtlas</span>
     </a>
 
     <nav class="main-nav">
@@ -41,7 +46,6 @@
         <span>⌕</span>
         <input id="globalSearch" type="search" placeholder="Szukaj pojęcia…" autocomplete="off" />
       </label>
-      <button id="cannabisToggle" class="top-button" aria-pressed="false">Cannabis</button>
     </div>
     <div id="stickyProgressMount" class="course-progress-slot"></div>
   </header>
