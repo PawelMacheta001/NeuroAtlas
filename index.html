@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0b0f0d" />
+  <meta name="description" content="NeuroAtlas — wizualna encyklopedia neurofarmakologii i cannabis." />
+  <title>NeuroAtlas v3 — visual cannabis edition</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="bg-noise"></div>
+  <div class="cannabis-bg-icons" aria-hidden="true">
+    <span class="bg-icon leaf">✣</span>
+    <span class="bg-icon laugh">☺</span>
+    <span class="bg-icon food">🍔</span>
+    <span class="bg-icon moon">☾</span>
+    <span class="bg-icon med">✚</span>
+    <span class="bg-icon focus">◉</span>
+    <span class="bg-icon spark">✦</span>
+  </div>
+  <header class="topbar">
+    <a class="brand" href="#/">
+      <div class="brand-mark">✦</div>
+      <div>
+        <div class="brand-title">NeuroAtlas <span class="version-badge">V6</span></div>
+        <div class="brand-sub">wizualna baza wiedzy • mechanizm → efekt</div>
+      </div>
+    </a>
+
+    <nav class="main-nav">
+      <a href="#/">Start</a>
+      <a href="#/topics">Tematy</a>
+      <a href="#/paths">Kursy</a>
+      <a href="#/graph">Mapa</a>
+    </nav>
+
+    <div class="top-actions">
+      <label class="search-shell">
+        <span>⌕</span>
+        <input id="globalSearch" type="search" placeholder="Szukaj pojęcia…" autocomplete="off" />
+      </label>
+      <button id="cannabisToggle" class="top-button" aria-pressed="false">Cannabis</button>
+    </div>
+  </header>
+
+  <div id="stickyProgressMount"></div>
+  <div id="searchResults" class="search-results" hidden></div>
+  <main id="app" class="page"></main>
+
+  <script src="data/data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
