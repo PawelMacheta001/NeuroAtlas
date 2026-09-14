@@ -22,6 +22,7 @@
   }));
 
   const STATE = { cannabisOnly: false };
+  let pageCleanup = null;
   const CAT_ACCENT = {
     foundations: '#9ff4be', receptors: '#9c89ff', enzymes: '#77efab', transporters: '#ffd977',
     neurotransmission: '#86efff', pharmacokinetics: '#ff9e72', interactions: '#ff88a8',
@@ -38,6 +39,192 @@
   const difficultyLabel = n => ['','start','łatwe','średnie','trudniejsze','zaawansowane'][n] || `poziom ${n}`;
   const relationText = rel => data.relation_types?.[rel] || rel;
   const visibleConcepts = () => STATE.cannabisOnly ? data.concepts.filter(c => ['medium','high'].includes(c.cannabis_relevance)) : data.concepts;
+
+
+  // Some attachment/preview environments block localStorage entirely.
+  // Never let that prevent the encyclopedia from rendering.
+  const memoryStorage = new Map();
+  const safeStorage = {
+    get(key, fallback = null) {
+      try {
+        const value = window.localStorage.getItem(key);
+        return value === null ? fallback : value;
+      } catch (_) {
+        return memoryStorage.has(key) ? memoryStorage.get(key) : fallback;
+      }
+    },
+    set(key, value) {
+      memoryStorage.set(key, value);
+      try { window.localStorage.setItem(key, value); } catch (_) {}
+    }
+
+  };
+
+  function runPageCleanup() {
+    if (typeof pageCleanup === 'function') {
+      try { pageCleanup(); } catch (_) {}
+    }
+    pageCleanup = null;
+  }
+
+  function categorySummary(id) {
+    const cat = categoryById.get(id);
+    return cat?.description || 'Blok wiedzy porządkujący pojęcia z podobnego obszaru.';
+  }
+
+  function graphLegendHTML() {
+    return `<div class="graph-legend">
+      <div class="legend-item"><span class="legend-dot category"></span><strong>Kategoria</strong><small>główna grupa pojęć</small></div>
+      <div class="legend-item"><span class="legend-dot concept"></span><strong>Pojęcie</strong><small>konkretny temat / wpis</small></div>
+      <div class="legend-item"><span class="legend-line dep"></span><strong>Zależność</strong><small>najpierw to, potem tamto</small></div>
+      <div class="legend-item"><span class="legend-line path"></span><strong>Ścieżka</strong><small>kolejność w kursie</small></div>
+    </div>`;
+  }
+
+  function buildKnowledgeMap(categoryFilter = 'all', pathFilter = 'all') {
+    let concepts = visibleConcepts();
+    if (pathFilter !== 'all') {
+      const path = pathById.get(pathFilter);
+      const allowed = new Set(path?.steps || []);
+      concepts = concepts.filter(c => allowed.has(c.id));
+    }
+    if (categoryFilter !== 'all') concepts = concepts.filter(c => c.category === categoryFilter);
+
+    const categories = [...new Set(concepts.map(c => c.category))]
+      .map(id => categoryById.get(id))
+      .filter(Boolean)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    const categoryNodes = categories.map((cat, i) => {
+      const angle = (Math.PI * 2 * i) / Math.max(categories.length, 1) - Math.PI / 2;
+      return {
+        id: `cat:${cat.id}`,
+        rawId: cat.id,
+        kind: 'category',
+        label: cat.title,
+        category: cat.id,
+        data: cat,
+        x: Math.cos(angle) * 300,
+        y: Math.sin(angle) * 178,
+        z: Math.sin(angle) * 170,
+        baseR: 26,
+        seed: i + 1
+      };
+    });
+
+    const nodes = [...categoryNodes];
+    const conceptIds = new Set(concepts.map(c => c.id));
+    const conceptNodes = [];
+    categories.forEach((cat, catIndex) => {
+      const parent = categoryNodes[catIndex];
+      const items = concepts.filter(c => c.category === cat.id);
+      items.forEach((c, i) => {
+        const angle = (Math.PI * 2 * i) / Math.max(items.length, 1) + (catIndex * 0.48);
+        const radius = 96 + (i % 4) * 26 + Math.floor(i / 4) * 14;
+        const wobble = ((i % 3) - 1) * 24;
+        conceptNodes.push({
+          id: c.id,
+          rawId: c.id,
+          kind: 'concept',
+          label: c.title,
+          category: c.category,
+          data: c,
+          x: parent.x + Math.cos(angle) * radius,
+          y: parent.y + Math.sin(angle) * (62 + (i % 5) * 9),
+          z: parent.z + Math.cos(angle * 1.4) * 92 + wobble,
+          baseR: 14,
+          seed: i + 1 + catIndex * 13,
+          parentId: parent.id
+        });
+      });
+    });
+    nodes.push(...conceptNodes);
+
+    const edges = [];
+    conceptNodes.forEach(n => {
+      edges.push({ from: n.parentId, to: n.id, kind: 'membership' });
+      (n.data.dependencies || []).forEach(depId => {
+        if (conceptIds.has(depId)) edges.push({ from: depId, to: n.id, kind: 'dependency' });
+      });
+      (n.data.related || []).slice(0, 3).forEach(rel => {
+        if (conceptIds.has(rel.id)) edges.push({ from: n.id, to: rel.id, kind: 'related' });
+      });
+    });
+
+    if (pathFilter !== 'all') {
+      const steps = pathById.get(pathFilter)?.steps || [];
+      for (let i = 0; i < steps.length - 1; i++) {
+        if (conceptIds.has(steps[i]) && conceptIds.has(steps[i + 1])) {
+          edges.push({ from: steps[i], to: steps[i + 1], kind: 'path' });
+        }
+      }
+    }
+
+    return { nodes, edges, categories, concepts };
+  }
+
+  function projectGraphNode(node, t, mode) {
+    const spin = mode === '3d' ? (t * 0.00010) : 0;
+    const wave = mode === '3d' ? Math.sin(t * 0.00075 + node.seed) * 7 : 0;
+    const cos = Math.cos(spin);
+    const sin = Math.sin(spin);
+    const rx = node.x * cos - node.z * sin;
+    const rz = node.z * cos + node.x * sin;
+    const ry = node.y + wave;
+    const cam = mode === '3d' ? 960 : 999999;
+    const scale = cam / (cam - rz);
+    return {
+      x: 600 + rx * scale,
+      y: 370 + ry * scale * 0.86,
+      scale,
+      z: rz
+    };
+  }
+
+  function graphNodeLabel(node) {
+    if (node.kind === 'category') return node.label;
+    const short = abbrev(node.label);
+    return short.length <= 10 ? short : short.slice(0, 10);
+  }
+
+  function graphNodePanel(node, model, pathFilter) {
+    if (!node) {
+      return `<div class="kicker">Mapa</div><h3>Najedź albo kliknij węzeł</h3><p>Po prawej stronie zobaczysz opis, kontekst i szybkie przejście do wpisu.</p>${graphLegendHTML()}`;
+    }
+    if (node.kind === 'category') {
+      const inside = model.concepts.filter(c => c.category === node.rawId).slice(0, 6);
+      return `
+        <div class="kicker">Kategoria</div>
+        <h3>${esc(node.label)}</h3>
+        <p>${esc(categorySummary(node.rawId))}</p>
+        <div class="graph-stat-grid">
+          <div class="graph-stat"><strong>${inside.length}</strong><span>pojęć w widoku</span></div>
+          <div class="graph-stat"><strong>${esc(catAccent(node.rawId))}</strong><span>kolor akcentu</span></div>
+        </div>
+        <div class="graph-chip-list">${inside.map(c => `<a class="graph-chip" href="#/concept/${encodeURIComponent(c.id)}">${esc(c.title)}</a>`).join('')}</div>
+        ${graphLegendHTML()}`;
+    }
+    const c = node.data;
+    const deps = (c.dependencies || []).map(id => conceptById.get(id)).filter(Boolean).slice(0, 5);
+    const inPaths = data.learning_paths.filter(p => p.steps.includes(c.id)).slice(0, 3);
+    return `
+      <div class="kicker">Pojęcie</div>
+      <h3>${esc(c.title)}</h3>
+      <p>${esc(textBlock(c))}</p>
+      <p>${esc(whyItMatters(c))}</p>
+      <div class="graph-stat-grid">
+        <div class="graph-stat"><strong>${c.difficulty}</strong><span>poziom</span></div>
+        <div class="graph-stat"><strong>${esc(cannabisLabel(c.cannabis_relevance))}</strong><span>cannabis</span></div>
+        <div class="graph-stat"><strong>${deps.length}</strong><span>zależności</span></div>
+      </div>
+      <div class="graph-actions-row">
+        <a class="button" href="#/concept/${encodeURIComponent(c.id)}">Otwórz temat</a>
+        ${pathFilter !== 'all' ? `<a class="button-secondary" href="#/path/${encodeURIComponent(pathFilter)}">Wróć do kursu</a>` : ''}
+      </div>
+      ${deps.length ? `<div class="graph-subtitle">Najpierw przeczytaj</div><div class="graph-chip-list">${deps.map(d => `<a class="graph-chip" href="#/concept/${encodeURIComponent(d.id)}">${esc(d.title)}</a>`).join('')}</div>` : ''}
+      ${inPaths.length ? `<div class="graph-subtitle">Występuje w kursach</div><div class="graph-chip-list">${inPaths.map(p => `<a class="graph-chip" href="#/path/${encodeURIComponent(p.id)}">${esc(p.title)}</a>`).join('')}</div>` : ''}
+      ${graphLegendHTML()}`;
+  }
 
   function hashCode(str) {
     let h = 2166136261;
@@ -418,15 +605,15 @@
   }
 
   function pathProgress(path) {
-    const done = new Set(JSON.parse(localStorage.getItem('neuroatlas-progress:'+path.id) || '[]'));
+    const done = new Set(JSON.parse(safeStorage.get('neuroatlas-progress:'+path.id, '[]') || '[]'));
     return { done, count: done.size, pct: Math.round((done.size / path.steps.length) * 100) || 0 };
   }
 
   function setStepDone(pathId, stepId, done) {
     const key = 'neuroatlas-progress:'+pathId;
-    const set = new Set(JSON.parse(localStorage.getItem(key) || '[]'));
+    const set = new Set(JSON.parse(safeStorage.get(key, '[]') || '[]'));
     if (done) set.add(stepId); else set.delete(stepId);
-    localStorage.setItem(key, JSON.stringify([...set]));
+    safeStorage.set(key, JSON.stringify([...set]));
   }
 
   function markActiveNav() {
@@ -489,9 +676,9 @@
         <section class="hero">
           <div class="card-bg"><img class="card-bg" src="${homeCannabisVisual()}" alt="" /></div><div class="card-shade"></div>
           <div class="hero-content">
-            <div class="kicker">V7.1 • runtime repaired</div>
-            <h1 class="section-title">V7.1 — naprawione renderowanie + różne ilustracje.</h1>
-            <p class="section-lead">Ta wersja ma widoczne ilustracje, bardziej wyróżnione treści i prostszy układ. Każda strona tematu i kursu ma własną okładkę, a miniatury tematów są teraz uproszczone i bardziej pamiętne, a kursy dostały osobne, wyraźnie różne okładki zamiast tych samych kompozycji.</p>
+            <div class="kicker">V10 • Profiler osobisty</div>
+            <h1 class="section-title">V9 — encyklopedia jako mini-lekcje.</h1>
+            <p class="section-lead">Wpisy są teraz wyraźnie dłuższe, ale podzielone na krótkie logiczne bloki: definicja, rozwinięcie, mechanizm krok po kroku, znaczenie, porównanie, interpretacja badań i jedno zdanie do zapamiętania.</p>
             <div class="pills"><span class="pill">Pojęcia <strong>${data.concepts.length}</strong></span><span class="pill">Kategorie <strong>${data.categories.length}</strong></span><span class="pill">Kursy <strong>${data.learning_paths.length}</strong></span></div>
             <div class="cta-row"><a class="button" href="#/topics">Przeglądaj tematy</a><a class="button-secondary" href="#/paths">Przejdź do kursów</a></div>
           </div>
@@ -604,28 +791,44 @@
 
         <div class="content-grid">
           <div class="main-stack">
-            <section class="panel">
+            <section class="panel lesson-intro">
               <div class="kicker">W skrócie</div>
               <h2>Co to jest?</h2>
-              <p class="strong-lead">${esc(textBlock(c))}</p>
-              <p>${esc(whyItMatters(c))}</p>
-              <div class="highlight-line">${(c.key_points?.length ? c.key_points : ['Najpierw rozumiej mechanizm', 'Potem patrz na dowody', 'Nie myl wiązania z efektem']).slice(0,4).map(x => `<div class="highlight">${esc(x)}</div>`).join('')}</div>
+              <p class="strong-lead">${esc(c.short)}</p>
+              ${(c.learning?.overview_paragraphs || [c.explanation]).map(p => `<p>${esc(p)}</p>`).join('')}
+              <div class="highlight-line">${(c.key_points?.length ? c.key_points : ['Oddziel wiązanie od efektu', 'Patrz na mechanizm', 'Sprawdzaj realną ekspozycję']).slice(0,4).map(x => `<div class="highlight">${esc(x)}</div>`).join('')}</div>
             </section>
 
-            <section class="split-card">
+            <section class="panel mechanism-panel">
+              <div class="kicker">Mechanizm</div>
+              <h2>Jak to działa krok po kroku?</h2>
+              <div class="mechanism-steps">${(c.learning?.mechanism_steps || []).map((x,i) => `<div class="mechanism-step"><div class="mechanism-number">${i+1}</div><div><strong>${i===0?'Punkt startowy':i===(c.learning?.mechanism_steps?.length||1)-1?'Efekt / wniosek':'Co dzieje się dalej'}</strong><p>${esc(x)}</p></div></div>`).join('')}</div>
+            </section>
+
+            <section class="split-card lesson-context">
               <div>
-                <div class="kicker">Rozumienie</div>
-                <h2>Jak to sobie poukładać?</h2>
-                <p>${esc(practicalUse(c))}</p>
-                <p>${esc(c.analogy || 'To pojęcie warto traktować jak klocek budujący większy model działania substancji w organizmie. W praktyce najlepiej patrzeć nie tylko na definicję, ale też na to, z czym to pojęcie się łączy.')}</p>
+                <div class="kicker">Znaczenie</div>
+                <h2>Po co to właściwie wiedzieć?</h2>
+                <p>${esc(c.learning?.why_it_matters || whyItMatters(c))}</p>
+                <div class="concept-divider"></div>
+                <div class="kicker">Porównaj</div>
+                <h3>Z czym najłatwiej to pomylić lub połączyć?</h3>
+                <p>${esc(c.learning?.compare_note || '')}</p>
               </div>
               <div><img class="inline-thumb" src="${mapVisual(c)}" alt="Schemat powiązań pojęcia ${esc(c.title)}" /></div>
             </section>
 
+            <section class="panel evidence-reading">
+              <div class="kicker">Czytanie badań</div>
+              <h2>Na co patrzeć w danych?</h2>
+              <p>${esc(c.learning?.study_note || '')}</p>
+              <div class="evidence-strip"><span>${esc(evidenceLabel(c.evidence_status))}</span><small>status dowodów tego wpisu</small></div>
+            </section>
+
             <section class="quote-card">
               <div class="kicker">Zapamiętaj</div>
-              <h3>Najkrótsza intuicja</h3>
-              <p>${esc(c.analogy || c.short)}</p>
+              <h3>Jedno zdanie, które warto wynieść</h3>
+              <p>${esc(c.learning?.memory_hook || c.analogy || c.short)}</p>
             </section>
 
             ${c.examples?.length ? `<section class="panel"><div class="kicker">Praktyka</div><h2>Przykłady</h2><div class="bullet-list">${c.examples.map(x => `<div class="bullet"><i>•</i><div>${esc(x)}</div></div>`).join('')}</div></section>` : ''}
@@ -732,40 +935,693 @@
     }));
   }
 
+
+  const PROFILER_KEY = 'neuroatlas-profiler-sessions-v1';
+  const PROFILER_TERPS = [
+    ['myrcene','Myrcen'], ['limonene','Limonen'], ['caryophyllene','β-kariofilen'],
+    ['pinene','α/β-pinen'], ['linalool','Linalol'], ['terpinolene','Terpinolen'],
+    ['humulene','Humulen'], ['ocimene','Ocimen']
+  ];
+  const PROFILER_DIMS = [
+    ['intensity','Intensywność'], ['euphoria','Euforia'], ['relaxation','Relaks'],
+    ['sleepiness','Senność'], ['appetite','Apetyt'], ['focus','Skupienie'],
+    ['sociability','Towarzyskość'], ['anxiety','Niepokój / dyskomfort'],
+    ['memory','Zaburzenie pamięci'], ['body','Body high / efekt fizyczny']
+  ];
+
+  const clampN = (n, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(n)) ? Number(n) : min));
+  const round1 = n => Math.round(Number(n) * 10) / 10;
+  const fmt = n => Number.isFinite(Number(n)) ? (Math.abs(n) >= 10 ? String(Math.round(n)) : round1(n).toFixed(1)) : '—';
+  const pct = n => `${Math.round(clampN(n, 0, 1) * 100)}%`;
+
+  function profilerSessions() {
+    try {
+      const raw = safeStorage.get(PROFILER_KEY, '[]') || '[]';
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) { return []; }
+  }
+  function saveProfilerSessions(items) { safeStorage.set(PROFILER_KEY, JSON.stringify(items.slice(0, 120))); }
+  function profilerId() { return `s_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; }
+
+  function frequencyFactor(v) {
+    return ({never:1.14,rare:1.08,monthly:1.03,weekly:.94,multi:.80,daily:.64,heavy:.52})[v] || .94;
+  }
+  function routeTiming(input) {
+    const method = input.method || '';
+    if (input.route === 'oral') return {onset:[30,120], peak:[120,240], duration:[4,8], label:'wolniejszy początek, dłuższy przebieg'};
+    if (input.route === 'sublingual') return {onset:[15,45], peak:[45,120], duration:[3,6], label:'pośredni profil czasowy'};
+    if (method === 'joint') return {onset:[1,5], peak:[10,30], duration:[2,4], label:'szybki początek'};
+    return {onset:[1,5], peak:[8,25], duration:[2,4], label:'szybki początek'};
+  }
+  function deliveryParams(input) {
+    if (input.route === 'oral') return {center:.08, low:.04, high:.15, effectScale:.88, label:'oral'};
+    if (input.route === 'sublingual') return {center:.15, low:.08, high:.25, effectScale:.62, label:'sublingual'};
+    const byMethod = {
+      joint:{center:.16,low:.07,high:.27,effectScale:1}, bong:{center:.23,low:.12,high:.35,effectScale:1},
+      vaporizer:{center:.29,low:.15,high:.40,effectScale:1}, cart:{center:.32,low:.18,high:.45,effectScale:1},
+      pipe:{center:.21,low:.10,high:.33,effectScale:1}
+    };
+    return byMethod[input.method] || {center:.23,low:.10,high:.35,effectScale:1,label:'inhalacja'};
+  }
+
+  function chemistryFromInput(input) {
+    let thcPotential = 0, cbdPotential = 0, cbg = 0, cbn = 0;
+    if (input.sourceMode === 'mg') {
+      thcPotential = clampN(input.thcMg,0,5000);
+      cbdPotential = clampN(input.cbdMg,0,5000);
+      cbg = clampN(input.cbgMg,0,5000);
+      cbn = clampN(input.cbnMg,0,5000);
+    } else {
+      const massMg = clampN(input.amountG,0,20) * 1000;
+      thcPotential = massMg * (clampN(input.thcPct,0,100) + .877 * clampN(input.thcaPct,0,100)) / 100;
+      cbdPotential = massMg * (clampN(input.cbdPct,0,100) + .877 * clampN(input.cbdaPct,0,100)) / 100;
+      cbg = massMg * clampN(input.cbgPct,0,100) / 100;
+      cbn = massMg * clampN(input.cbnPct,0,100) / 100;
+    }
+    return {thcPotential, cbdPotential, cbg, cbn, cbdRatio: thcPotential > 0 ? cbdPotential / thcPotential : 0};
+  }
+
+  function terpenePersonalSimilarity(a={}, b={}) {
+    const av = PROFILER_TERPS.map(([k])=>clampN(a[k],0,15));
+    const bv = PROFILER_TERPS.map(([k])=>clampN(b[k],0,15));
+    const sa = av.reduce((x,y)=>x+y,0), sb = bv.reduce((x,y)=>x+y,0);
+    if (sa < .01 || sb < .01) return .65;
+    let d=0;
+    for(let i=0;i<av.length;i++) d += Math.abs(av[i]/sa - bv[i]/sb);
+    return clampN(1-d/2,0,1);
+  }
+
+  function feedbackSimilarity(input, currentChem, oldSession) {
+    if (!oldSession?.feedback || !oldSession?.input) return 0;
+    const oldChem = chemistryFromInput(oldSession.input);
+    const routeW = input.route === oldSession.input.route ? 1 : .28;
+    const methodW = input.method === oldSession.input.method ? 1 : .78;
+    const doseW = Math.exp(-Math.abs(Math.log((currentChem.thcPotential + 1)/(oldChem.thcPotential + 1))) * 1.25);
+    const cbdW = Math.exp(-Math.abs(Math.log((currentChem.cbdRatio + .15)/(oldChem.cbdRatio + .15))) * .45);
+    const freqW = input.frequency === oldSession.input.frequency ? 1 : .78;
+    const terpW = .68 + .32 * terpenePersonalSimilarity(input.terpenes, oldSession.input.terpenes);
+    return routeW * methodW * doseW * cbdW * freqW * terpW;
+  }
+
+  function baseProfilerPrediction(input) {
+    const chem = chemistryFromInput(input);
+    const delivery = deliveryParams(input);
+    const timing = routeTiming(input);
+    const freq = frequencyFactor(input.frequency);
+    let breakFactor = 1;
+    const days = clampN(input.daysSince,0,365);
+    if (days >= 14) breakFactor = 1.13;
+    else if (days >= 7) breakFactor = 1.09;
+    else if (days >= 3) breakFactor = 1.05;
+    else if (days < .5) breakFactor = .96;
+    const sensitivity = clampN(input.sensitivity, .65, 1.4);
+
+    const deliveredCenter = chem.thcPotential * delivery.center;
+    const deliveredRange = [chem.thcPotential * delivery.low, chem.thcPotential * delivery.high];
+    const psychoDose = input.route === 'oral' ? chem.thcPotential * delivery.effectScale : deliveredCenter * delivery.effectScale;
+    let intensity = 10 * (1 - Math.exp(-psychoDose / (input.route === 'oral' ? 9.5 : 7.2)));
+    intensity = clampN(intensity * freq * breakFactor * sensitivity, 0, 10);
+
+    const stress = clampN(input.stress,0,10);
+    const fatigue = clampN(input.fatigue,0,10);
+    const terps = input.terpenes || {};
+    const terpTotal = PROFILER_TERPS.reduce((s,[k])=>s+clampN(terps[k],0,15),0);
+    const terpCap = x => clampN(x, -.75, .75);
+    const terpMods = {
+      relaxation: terpCap(clampN(terps.myrcene,0,15)*.18 + clampN(terps.linalool,0,15)*.22 + clampN(terps.caryophyllene,0,15)*.10),
+      sleepiness: terpCap(clampN(terps.myrcene,0,15)*.16 + clampN(terps.linalool,0,15)*.20),
+      euphoria: terpCap(clampN(terps.limonene,0,15)*.10 + clampN(terps.terpinolene,0,15)*.05),
+      focus: terpCap(clampN(terps.pinene,0,15)*.08 - clampN(terps.myrcene,0,15)*.05),
+      sociability: terpCap(clampN(terps.limonene,0,15)*.06),
+      body: terpCap(clampN(terps.myrcene,0,15)*.10 + clampN(terps.caryophyllene,0,15)*.08)
+    };
+
+    let anxiety = clampN((intensity-4.2)*.48 + stress*.28 + (freq>1 ? .3 : 0), 0, 10);
+    const dims = {
+      intensity,
+      euphoria: clampN(1.2 + intensity*.67 + terpMods.euphoria,0,10),
+      relaxation: clampN(1.0 + intensity*.53 + terpMods.relaxation - stress*.05,0,10),
+      sleepiness: clampN(.5 + intensity*.35 + fatigue*.22 + terpMods.sleepiness,0,10),
+      appetite: clampN(.8 + intensity*.57,0,10),
+      focus: clampN(6.3 - intensity*.31 - fatigue*.16 - anxiety*.10 + terpMods.focus,0,10),
+      sociability: 0,
+      anxiety,
+      memory: clampN(.4 + intensity*.63,0,10),
+      body: 0
+    };
+    dims.sociability = clampN(2.4 + dims.euphoria*.42 - dims.anxiety*.28 + terpMods.sociability,0,10);
+    dims.body = clampN(.7 + intensity*.46 + dims.relaxation*.25 + terpMods.body,0,10);
+
+    const chemKnown = chem.thcPotential > 0 ? 1 : 0;
+    let confidence = .25 + chemKnown*.25 + (input.route ? .12 : 0) + (input.frequency ? .08 : 0) + (input.sourceMode==='percent' && clampN(input.amountG,0,20)>0 ? .08 : .05);
+    if (terpTotal > 0) confidence += .03;
+    confidence = clampN(confidence, .18, .76);
+
+    return {chem, delivery, timing, dims, confidence, deliveredCenter, deliveredRange, terpTotal, personal:{count:0,effective:0,weight:0}};
+  }
+
+  function personalizedProfilerPrediction(input, sessions) {
+    const base = baseProfilerPrediction(input);
+    const matches = sessions
+      .filter(s=>s.feedback && s.input)
+      .map(s=>({s,w:feedbackSimilarity(input,base.chem,s)}))
+      .filter(x=>x.w>.10)
+      .sort((a,b)=>b.w-a.w)
+      .slice(0,8);
+    const sumW = matches.reduce((s,x)=>s+x.w,0);
+    const personalWeight = clampN(sumW / 4.8, 0, .68);
+    if (sumW > 0) {
+      for (const [key] of PROFILER_DIMS) {
+        const usable = matches.filter(x=>Number.isFinite(Number(x.s.feedback[key])));
+        const uw = usable.reduce((s,x)=>s+x.w,0);
+        if (!uw) continue;
+        const avg = usable.reduce((s,x)=>s+Number(x.s.feedback[key])*x.w,0)/uw;
+        base.dims[key] = clampN(base.dims[key]*(1-personalWeight)+avg*personalWeight,0,10);
+      }
+      const numericTime = (field, fallback) => {
+        const arr=matches.filter(x=>Number.isFinite(Number(x.s.feedback[field])) && Number(x.s.feedback[field])>0);
+        if(!arr.length)return fallback;
+        const w=arr.reduce((s,x)=>s+x.w,0), avg=arr.reduce((s,x)=>s+Number(x.s.feedback[field])*x.w,0)/w;
+        return avg;
+      };
+      const baseOnset=(base.timing.onset[0]+base.timing.onset[1])/2;
+      const basePeak=(base.timing.peak[0]+base.timing.peak[1])/2;
+      const baseDur=(base.timing.duration[0]+base.timing.duration[1])/2;
+      const po=numericTime('onsetMin',baseOnset), pp=numericTime('peakMin',basePeak), pd=numericTime('durationH',baseDur);
+      base.timing.personalized = {
+        onset: round1(baseOnset*(1-personalWeight)+po*personalWeight),
+        peak: round1(basePeak*(1-personalWeight)+pp*personalWeight),
+        duration: round1(baseDur*(1-personalWeight)+pd*personalWeight)
+      };
+    }
+    base.personal = {count:matches.length,effective:round1(sumW),weight:personalWeight,ids:matches.map(x=>x.s.id)};
+    base.confidence = clampN(base.confidence + Math.min(.18, sumW*.045), .18, .90);
+    return base;
+  }
+
+  function scoreRange(score, confidence) {
+    const half = 2.15 - confidence * 1.35;
+    return [clampN(score-half,0,10), clampN(score+half,0,10)];
+  }
+  function confidenceLabel(c) { return c < .42 ? 'niska' : c < .68 ? 'umiarkowana' : 'wyższa'; }
+
+  function collectProfilerInput(form) {
+    const fd = new FormData(form);
+    const n = key => Number(fd.get(key) || 0);
+    const sourceMode = String(fd.get('sourceMode') || 'percent');
+    return {
+      label:String(fd.get('label')||'').trim().slice(0,80), productType:String(fd.get('productType')||'flower'),
+      sourceMode, route:String(fd.get('route')||'inhaled'), method:String(fd.get('method')||'vaporizer'),
+      amountG:n('amountG'), thcPct:n('thcPct'), thcaPct:n('thcaPct'), cbdPct:n('cbdPct'), cbdaPct:n('cbdaPct'), cbgPct:n('cbgPct'), cbnPct:n('cbnPct'),
+      thcMg:n('thcMg'), cbdMg:n('cbdMg'), cbgMg:n('cbgMg'), cbnMg:n('cbnMg'), vaporTemp:n('vaporTemp'), meal:String(fd.get('meal')||'unknown'),
+      frequency:String(fd.get('frequency')||'weekly'), daysSince:n('daysSince'), sensitivity:n('sensitivity')||1, stress:n('stress'), fatigue:n('fatigue'),
+      caffeine:fd.get('caffeine')==='on', nicotine:fd.get('nicotine')==='on', alcohol:fd.get('alcohol')==='on',
+      terpenes:Object.fromEntries(PROFILER_TERPS.map(([k])=>[k,n('terp_'+k)]))
+    };
+  }
+
+  function profilerInputIsUsable(input) {
+    if (input.sourceMode === 'mg') return input.thcMg > 0;
+    return input.amountG > 0 && (input.thcPct > 0 || input.thcaPct > 0);
+  }
+
+  function routeMethodOptions(route, current='') {
+    const options = route === 'oral' ? [['edible','Edible'],['oil','Olej / kapsułka']]
+      : route === 'sublingual' ? [['oil','Olej podjęzykowy'],['spray','Spray / krople']]
+      : [['vaporizer','Vaporizer'],['bong','Bong'],['joint','Joint'],['pipe','Lufka / pipe'],['cart','Cartridge / vape']];
+    return options.map(([v,l])=>`<option value="${v}" ${v===current?'selected':''}>${l}</option>`).join('');
+  }
+
+  function profilerFormHTML() {
+    return `
+      <form id="profilerForm" class="profiler-form" novalidate>
+        <section class="profiler-section">
+          <div class="kicker">1 • Produkt i podanie</div><h2>Co dokładnie analizujemy?</h2>
+          <div class="profiler-field-grid">
+            <label class="profiler-field wide"><span>Nazwa / odmiana <small>opcjonalnie</small></span><input name="label" placeholder="np. Ghost Train Haze / własna próbka" maxlength="80"></label>
+            <label class="profiler-field"><span>Produkt</span><select name="productType"><option value="flower">Susz</option><option value="hash">Hash</option><option value="concentrate">Koncentrat</option><option value="vape">Vape / cartridge</option><option value="edible">Edible</option><option value="oil">Olej</option></select></label>
+            <label class="profiler-field"><span>Droga podania</span><select name="route" id="profilerRoute"><option value="inhaled">Inhalacja</option><option value="oral">Oral</option><option value="sublingual">Podjęzykowo</option></select></label>
+            <label class="profiler-field"><span>Metoda</span><select name="method" id="profilerMethod">${routeMethodOptions('inhaled','vaporizer')}</select></label>
+            <label class="profiler-field"><span>Temperatura vaporizera °C <small>opcjonalnie</small></span><input type="number" name="vaporTemp" min="80" max="260" step="1" placeholder="185"></label>
+          </div>
+        </section>
+
+        <section class="profiler-section">
+          <div class="kicker">2 • Chemia</div><h2>Co wiesz o składzie?</h2>
+          <div class="profiler-mode-switch" role="radiogroup" aria-label="Sposób podania składu">
+            <label><input type="radio" name="sourceMode" value="percent" checked><span>Mam % / COA</span></label>
+            <label><input type="radio" name="sourceMode" value="mg"><span>Znam mg dawki</span></label>
+          </div>
+          <div id="profilerChemPercent" class="profiler-field-grid chem-pane">
+            <label class="profiler-field"><span>Ilość produktu (g)</span><input type="number" name="amountG" min="0" max="20" step="0.01" value="0.20"></label>
+            <label class="profiler-field"><span>THC %</span><input type="number" name="thcPct" min="0" max="100" step="0.01" value="1"></label>
+            <label class="profiler-field"><span>THCA %</span><input type="number" name="thcaPct" min="0" max="100" step="0.01" value="20"></label>
+            <label class="profiler-field"><span>CBD %</span><input type="number" name="cbdPct" min="0" max="100" step="0.01" value="0"></label>
+            <label class="profiler-field"><span>CBDA %</span><input type="number" name="cbdaPct" min="0" max="100" step="0.01" value="0"></label>
+            <label class="profiler-field"><span>CBG % <small>opcjonalnie</small></span><input type="number" name="cbgPct" min="0" max="100" step="0.01" value="0"></label>
+            <label class="profiler-field"><span>CBN % <small>opcjonalnie</small></span><input type="number" name="cbnPct" min="0" max="100" step="0.01" value="0"></label>
+          </div>
+          <div id="profilerChemMg" class="profiler-field-grid chem-pane" hidden>
+            <label class="profiler-field"><span>THC w użytej porcji (mg)</span><input type="number" name="thcMg" min="0" max="5000" step="0.1" value="10"></label>
+            <label class="profiler-field"><span>CBD (mg)</span><input type="number" name="cbdMg" min="0" max="5000" step="0.1" value="0"></label>
+            <label class="profiler-field"><span>CBG (mg)</span><input type="number" name="cbgMg" min="0" max="5000" step="0.1" value="0"></label>
+            <label class="profiler-field"><span>CBN (mg)</span><input type="number" name="cbnMg" min="0" max="5000" step="0.1" value="0"></label>
+          </div>
+          <div class="profiler-note">THCA → potencjalne THC liczymy z przelicznikiem 0,877. Ilość w materiale nie jest traktowana jak ilość wchłonięta.</div>
+        </section>
+
+        <section class="profiler-section">
+          <div class="kicker">3 • Terpeny</div><h2>Profil terpenowy <small>(opcjonalny)</small></h2>
+          <p class="profiler-help">Wpisuj % masy produktu. Ich wpływ na wynik jest celowo mały — dane pozwalające przewidywać subiektywny efekt człowieka na podstawie terpenów są ograniczone.</p>
+          <div class="profiler-terp-grid">${PROFILER_TERPS.map(([k,l])=>`<label class="profiler-field"><span>${l} %</span><input type="number" name="terp_${k}" min="0" max="15" step="0.01" value="0"></label>`).join('')}</div>
+        </section>
+
+        <section class="profiler-section">
+          <div class="kicker">4 • Ty i kontekst</div><h2>Co może zmienić reakcję?</h2>
+          <div class="profiler-field-grid">
+            <label class="profiler-field"><span>Częstotliwość</span><select name="frequency"><option value="never">Pierwszy raz / praktycznie nigdy</option><option value="rare">Kilka razy w roku</option><option value="monthly">Kilka razy w miesiącu</option><option value="weekly" selected>Około raz w tygodniu</option><option value="multi">Kilka razy w tygodniu</option><option value="daily">Codziennie</option><option value="heavy">Wielokrotnie dziennie</option></select></label>
+            <label class="profiler-field"><span>Dni od ostatniego użycia</span><input type="number" name="daysSince" min="0" max="365" step="0.5" value="2"></label>
+            <label class="profiler-field wide"><span>Wrażliwość na THC <output id="sensitivityOut">1.00×</output></span><input id="sensitivityInput" type="range" name="sensitivity" min="0.65" max="1.40" step="0.05" value="1"></label>
+            <label class="profiler-field wide"><span>Aktualny stres / napięcie <output id="stressOut">3/10</output></span><input id="stressInput" type="range" name="stress" min="0" max="10" step="1" value="3"></label>
+            <label class="profiler-field wide"><span>Zmęczenie <output id="fatigueOut">3/10</output></span><input id="fatigueInput" type="range" name="fatigue" min="0" max="10" step="1" value="3"></label>
+          </div>
+          <div class="profiler-checks">
+            <label><input type="checkbox" name="caffeine"> kofeina</label><label><input type="checkbox" name="nicotine"> nikotyna</label><label><input type="checkbox" name="alcohol"> alkohol</label>
+          </div>
+          <div class="profiler-note warning">Te trzy pozycje są zapisywane jako kontekst, ale nie zwiększają „mocy” w modelu. Alkohol może zwiększać ryzyko nieprzyjemnych efektów — Profiler nie służy do planowania mieszanek ani określania bezpiecznej dawki.</div>
+        </section>
+        <div id="profilerValidation" class="profiler-validation" role="status"></div>
+        <div class="profiler-actions"><button class="button" type="submit">Policz predykcję</button><button class="button-secondary" type="button" id="profilerReset">Wyczyść formularz</button></div>
+      </form>`;
+  }
+
+  function profilerEmptyResultHTML() {
+    return `<div class="profiler-result-empty"><div class="profiler-orbit">✦</div><div class="kicker">Wynik</div><h2>Wypełnij dane produktu</h2><p>Profiler pokaże zakres przewidywanego działania, a nie fałszywie precyzyjną jedną liczbę. Po kilku zapisanych sesjach zacznie dodatkowo kalibrować wynik pod Twoją własną historię.</p><div class="profiler-empty-flow"><span>chemia</span><b>→</b><span>podanie</span><b>→</b><span>Ty</span><b>→</b><span>predykcja</span></div></div>`;
+  }
+
+  function profilerResultHTML(input, result, saved=false) {
+    const conf=confidenceLabel(result.confidence);
+    const pWeight=result.personal.weight;
+    const time=result.timing.personalized;
+    const contributor = [
+      [`${result.chem.thcPotential.toFixed(1)} mg`, 'potencjalnego THC w użytej porcji', 'strong'],
+      [`${round1(result.deliveredRange[0])}–${round1(result.deliveredRange[1])} mg`, 'bardzo przybliżony zakres ekspozycji systemowej', 'medium'],
+      [input.frequency==='daily'||input.frequency==='heavy'?'wysoka':'niższa', 'tolerancja wynikająca z częstotliwości', 'medium'],
+      [result.terpTotal>0?'uwzględnione lekko':'brak danych', 'terpeny — niska waga w modelu', 'low'],
+      [result.personal.count?`${result.personal.count} podobnych`:'brak', 'Twoje wcześniejsze sesje', result.personal.count?'strong':'low']
+    ];
+    return `<div class="profiler-result-card">
+      <div class="profiler-result-head"><div><div class="kicker">Predykcja${input.label?' • '+esc(input.label):''}</div><h2>Profil działania</h2></div><div class="confidence-badge ${conf==='wyższa'?'good':conf==='umiarkowana'?'mid':'low'}"><span>${conf}</span><small>pewność</small></div></div>
+      <div class="profiler-safety">Model edukacyjny, nie medyczny. Nie używaj wyniku do ustalania „bezpiecznej” dawki, prowadzenia pojazdu ani mieszania substancji.</div>
+      <div class="profiler-score-list">${PROFILER_DIMS.map(([k,l])=>{const v=result.dims[k];const r=scoreRange(v,result.confidence-(k==='intensity'?0:.08));return `<div class="profiler-score"><div class="profiler-score-top"><span>${l}</span><strong>${fmt(v)} <small>/10</small></strong></div><div class="profiler-score-track"><span style="width:${clampN(v,0,10)*10}%"></span></div><div class="profiler-score-range">orientacyjny zakres ${fmt(r[0])}–${fmt(r[1])}</div></div>`}).join('')}</div>
+      <div class="profiler-time-grid">
+        <div><span>Początek</span><strong>${time?`~${fmt(time.onset)} min`:`${result.timing.onset[0]}–${result.timing.onset[1]} min`}</strong></div>
+        <div><span>Peak</span><strong>${time?`~${fmt(time.peak)} min`:`${result.timing.peak[0]}–${result.timing.peak[1]} min`}</strong></div>
+        <div><span>Dominujący efekt</span><strong>${time?`~${fmt(time.duration)} h`:`${result.timing.duration[0]}–${result.timing.duration[1]} h`}</strong></div>
+      </div>
+      <div class="profiler-explain"><div class="kicker">Co najbardziej wpłynęło na wynik?</div>${contributor.map(([v,l,c])=>`<div class="profiler-factor"><strong class="${c}">${esc(v)}</strong><span>${esc(l)}</span></div>`).join('')}</div>
+      <div class="profiler-personal-box ${result.personal.count?'active':''}"><div><div class="kicker">Personalizacja</div><strong>${result.personal.count ? `${result.personal.count} podobnych sesji użytych w kalibracji` : 'Jeszcze bez osobistej kalibracji'}</strong><p>${result.personal.count ? `Model osobisty ma teraz około ${Math.round(pWeight*100)}% udziału w korekcie bazowego wyniku. Im więcej podobnych, opisanych sesji zapiszesz, tym większe znaczenie może mieć Twoja historia.` : 'Zapisz sesję, a po użyciu dodaj rzeczywiste odczucia. Kolejne predykcje będą porównywane z najbardziej podobnymi wpisami.'}</p></div></div>
+      <div class="profiler-actions">${saved?'<span class="pill"><strong>Zapisano</strong> — po sesji uzupełnij odczucia w historii</span>':'<button type="button" class="button" id="saveProfilerSession">Zapisz tę sesję</button>'}</div>
+    </div>`;
+  }
+
+  function profilerHistoryHTML(sessions) {
+    if (!sessions.length) return `<section class="profiler-history panel"><div class="kicker">Historia</div><h2>Jeszcze pusto</h2><p>Po zapisaniu predykcji pojawi się tutaj sesja. Później uzupełnisz, jak było naprawdę — właśnie te dane pozwolą personalizować kolejne wyniki.</p></section>`;
+    const withFeedback=sessions.filter(s=>s.feedback).length;
+    return `<section class="profiler-history panel"><div class="profiler-history-head"><div><div class="kicker">Historia i model osobisty</div><h2>${sessions.length} sesji • ${withFeedback} z odczuciami</h2></div><div class="profiler-actions"><button class="button-secondary" type="button" data-prof-action="export">Eksport JSON</button><button class="button-secondary danger" type="button" data-prof-action="clear">Wyczyść historię</button></div></div>
+      <div class="profiler-history-list">${sessions.slice(0,30).map(s=>{const chem=chemistryFromInput(s.input);const p=s.prediction;return `<article class="profiler-session ${s.feedback?'calibrated':''}"><div class="profiler-session-main"><div class="kicker">${new Date(s.createdAt).toLocaleString('pl-PL')}</div><h3>${esc(s.input.label||'Sesja bez nazwy')}</h3><p>${esc(s.input.route)} • THC w porcji: ${fmt(chem.thcPotential)} mg • przewidziana intensywność ${fmt(p?.dims?.intensity||0)}/10</p>${s.feedback?`<div class="session-actual"><span>Rzeczywista intensywność</span><strong>${fmt(s.feedback.intensity)}/10</strong><span>• euforia ${fmt(s.feedback.euphoria)} • relaks ${fmt(s.feedback.relaxation)}</span></div>`:'<div class="session-pending">Czeka na opis rzeczywistego efektu</div>'}</div><div class="profiler-session-actions"><button type="button" class="button" data-prof-action="feedback" data-id="${s.id}">${s.feedback?'Edytuj odczucia':'Jak było naprawdę?'}</button><button type="button" class="button-secondary" data-prof-action="reuse" data-id="${s.id}">Użyj jako szablonu</button><button type="button" class="icon-delete" aria-label="Usuń sesję" data-prof-action="delete" data-id="${s.id}">×</button></div></article>`}).join('')}</div></section>`;
+  }
+
+  function profilerFeedbackHTML(session) {
+    const f=session.feedback||{};
+    return `<section class="profiler-feedback panel" id="profilerFeedbackEditor"><div class="profiler-feedback-head"><div><div class="kicker">Kalibracja osobista</div><h2>Jak było naprawdę?</h2><p>${esc(session.input.label||'Sesja bez nazwy')} • ${new Date(session.createdAt).toLocaleString('pl-PL')}</p></div><button type="button" class="icon-delete" data-prof-action="close-feedback" aria-label="Zamknij">×</button></div>
+      <form id="profilerFeedbackForm" data-id="${session.id}"><div class="feedback-grid">${PROFILER_DIMS.map(([k,l])=>`<label class="feedback-slider"><span>${l}<output id="fb_${k}_out">${Number.isFinite(Number(f[k]))?fmt(f[k]):'5.0'}/10</output></span><input type="range" name="${k}" min="0" max="10" step="0.5" value="${Number.isFinite(Number(f[k]))?clampN(f[k],0,10):5}"></label>`).join('')}</div>
+      <div class="profiler-field-grid"><label class="profiler-field"><span>Początek działania (min)</span><input type="number" name="onsetMin" min="0" max="1440" step="1" value="${f.onsetMin??''}"></label><label class="profiler-field"><span>Peak po (min)</span><input type="number" name="peakMin" min="0" max="1440" step="1" value="${f.peakMin??''}"></label><label class="profiler-field"><span>Dominujący efekt trwał (h)</span><input type="number" name="durationH" min="0" max="48" step="0.25" value="${f.durationH??''}"></label><label class="profiler-field wide"><span>Notatka <small>opcjonalnie</small></span><textarea name="note" rows="3" maxlength="600" placeholder="Co było charakterystyczne?">${esc(f.note||'')}</textarea></label></div>
+      <div class="profiler-note">Te oceny są Twoją obserwacją, nie „prawdą o odmianie”. Profiler wykorzystuje je tylko do porównywania kolejnych, podobnych sesji.</div><div class="profiler-actions"><button class="button" type="submit">Zapisz rzeczywisty efekt</button><button class="button-secondary" type="button" data-prof-action="close-feedback">Anuluj</button></div></form></section>`;
+  }
+
+  function renderProfiler() {
+    stickyMount.innerHTML='';
+    let sessions=profilerSessions();
+    let currentInput=null, currentResult=null, currentSaved=false;
+    app.innerHTML=`<div class="stack profiler-page"><section class="page-cover card profiler-cover"><div class="card-bg"><img class="card-bg" src="${visual('profiler-v10','#d4ff6f','PROFILER')}" alt="" /></div><div class="card-shade"></div><div class="page-cover-main"><div class="kicker">V10 • model osobisty</div><h1 class="section-title">Profiler działania cannabis</h1><p class="section-lead">Wprowadź skład produktu, sposób użycia i kontekst. NeuroAtlas policzy ostrożną predykcję z zakresem niepewności, a po zapisaniu rzeczywistych odczuć zacznie kalibrować przyszłe wyniki pod Ciebie.</p><div class="pills"><span class="pill">nie podaje dawki</span><span class="pill">terpeny mają małą wagę</span><span class="pill">uczy się z historii lokalnej</span></div></div><div class="page-cover-visual"><img src="${visual('profiler-model','#9580ff','CHEMIA → TY → EFEKT')}" alt="Schemat Profilera" /></div></section>
+      <section class="profiler-disclaimer"><strong>Ważne:</strong> to edukacyjny model heurystyczny, nie test medyczny ani narzędzie do określania bezpiecznej dawki. Subiektywne działanie cannabis jest bardzo zmienne, a wpływu terpenów nie da się obecnie wiarygodnie przeliczać na konkretne odczucia u człowieka.</section>
+      <div class="profiler-layout"><div>${profilerFormHTML()}</div><aside id="profilerResult" class="profiler-result">${profilerEmptyResultHTML()}</aside></div>
+      <div id="profilerFeedbackMount"></div><div id="profilerHistoryMount">${profilerHistoryHTML(sessions)}</div></div>`;
+
+    const form=document.getElementById('profilerForm');
+    const resultMount=document.getElementById('profilerResult');
+    const historyMount=document.getElementById('profilerHistoryMount');
+    const feedbackMount=document.getElementById('profilerFeedbackMount');
+    const validation=document.getElementById('profilerValidation');
+    const route=document.getElementById('profilerRoute'), method=document.getElementById('profilerMethod');
+    const pctPane=document.getElementById('profilerChemPercent'), mgPane=document.getElementById('profilerChemMg');
+
+    function refreshHistory(){sessions=profilerSessions();historyMount.innerHTML=profilerHistoryHTML(sessions);}
+    function syncMode(){const m=form.querySelector('input[name="sourceMode"]:checked')?.value||'percent';pctPane.hidden=m!=='percent';mgPane.hidden=m!=='mg';}
+    function syncRoute(){const cur=method.value;method.innerHTML=routeMethodOptions(route.value,cur);if(!method.value)method.selectedIndex=0;}
+    function syncOutputs(){const pairs=[['sensitivityInput','sensitivityOut',v=>Number(v).toFixed(2)+'×'],['stressInput','stressOut',v=>v+'/10'],['fatigueInput','fatigueOut',v=>v+'/10']];pairs.forEach(([i,o,f])=>{const input=document.getElementById(i),out=document.getElementById(o);if(input&&out)out.textContent=f(input.value);});}
+    form.addEventListener('input',e=>{if(e.target.name==='sourceMode')syncMode();syncOutputs();});
+    route.addEventListener('change',syncRoute);
+    syncMode();syncOutputs();
+
+    form.addEventListener('submit',e=>{
+      e.preventDefault();
+      const input=collectProfilerInput(form);
+      if(!profilerInputIsUsable(input)){validation.textContent=input.sourceMode==='mg'?'Podaj THC w mg dla użytej porcji.':'Podaj ilość produktu oraz THC lub THCA.';return;}
+      validation.textContent='';currentInput=input;currentResult=personalizedProfilerPrediction(input,sessions);currentSaved=false;resultMount.innerHTML=profilerResultHTML(input,currentResult,false);
+      resultMount.scrollIntoView({behavior:'smooth',block:'nearest'});
+    });
+
+    form.querySelector('#profilerReset').addEventListener('click',()=>{form.reset();syncMode();syncRoute();syncOutputs();validation.textContent='';currentInput=null;currentResult=null;currentSaved=false;resultMount.innerHTML=profilerEmptyResultHTML();});
+
+    resultMount.addEventListener('click',e=>{
+      if(e.target?.id!=='saveProfilerSession'||!currentInput||!currentResult||currentSaved)return;
+      const item={id:profilerId(),createdAt:new Date().toISOString(),input:currentInput,prediction:currentResult,feedback:null};
+      sessions.unshift(item);saveProfilerSessions(sessions);currentSaved=true;resultMount.innerHTML=profilerResultHTML(currentInput,currentResult,true);refreshHistory();
+    });
+
+    function fillForm(input){
+      if(!input)return;
+      Object.entries(input).forEach(([k,v])=>{
+        if(k==='terpenes')return;
+        const el=form.elements.namedItem(k);if(!el)return;
+        if(el instanceof RadioNodeList){const radio=form.querySelector(`input[name="${k}"][value="${CSS.escape(String(v))}"]`);if(radio)radio.checked=true;}
+        else if(el.type==='checkbox')el.checked=!!v;else el.value=v??'';
+      });
+      Object.entries(input.terpenes||{}).forEach(([k,v])=>{const el=form.elements.namedItem('terp_'+k);if(el)el.value=v;});
+      syncMode();syncRoute();syncOutputs();window.scrollTo({top:app.offsetTop,behavior:'smooth'});
+    }
+
+    app.addEventListener('click',e=>{
+      const btn=e.target.closest?.('[data-prof-action]');if(!btn)return;const action=btn.dataset.profAction,id=btn.dataset.id;
+      if(action==='feedback'){const s=sessions.find(x=>x.id===id);if(s){feedbackMount.innerHTML=profilerFeedbackHTML(s);feedbackMount.scrollIntoView({behavior:'smooth',block:'start'});}}
+      if(action==='close-feedback'){feedbackMount.innerHTML='';}
+      if(action==='reuse'){const s=sessions.find(x=>x.id===id);if(s)fillForm(s.input);}
+      if(action==='delete'){const s=sessions.find(x=>x.id===id);if(s&&confirm('Usunąć tę sesję z historii?')){sessions=sessions.filter(x=>x.id!==id);saveProfilerSessions(sessions);feedbackMount.innerHTML='';refreshHistory();}}
+      if(action==='clear'){if(confirm('Usunąć całą historię Profilera? Tej operacji nie da się cofnąć.')){sessions=[];saveProfilerSessions([]);feedbackMount.innerHTML='';refreshHistory();}}
+      if(action==='export'){
+        const blob=new Blob([JSON.stringify({version:1,exportedAt:new Date().toISOString(),sessions},null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='neuroatlas-profiler-history.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      }
+    });
+
+    app.addEventListener('input',e=>{
+      if(e.target.closest?.('#profilerFeedbackForm')&&e.target.type==='range'){
+        const out=document.getElementById('fb_'+e.target.name+'_out');if(out)out.textContent=Number(e.target.value).toFixed(1)+'/10';
+      }
+    });
+    app.addEventListener('submit',e=>{
+      const fb=e.target.closest?.('#profilerFeedbackForm');if(!fb)return;e.preventDefault();
+      const id=fb.dataset.id,s=sessions.find(x=>x.id===id);if(!s)return;const fd=new FormData(fb),feedback={};
+      PROFILER_DIMS.forEach(([k])=>feedback[k]=clampN(Number(fd.get(k)),0,10));
+      feedback.onsetMin=clampN(Number(fd.get('onsetMin')||0),0,1440)||null;feedback.peakMin=clampN(Number(fd.get('peakMin')||0),0,1440)||null;feedback.durationH=clampN(Number(fd.get('durationH')||0),0,48)||null;feedback.note=String(fd.get('note')||'').trim().slice(0,600);
+      s.feedback=feedback;saveProfilerSessions(sessions);feedbackMount.innerHTML='<section class="panel profiler-saved"><div class="kicker">Zapisano</div><h2>Ta sesja może już kalibrować kolejne predykcje.</h2><p>Największą wagę dostaną przyszłe sesje o podobnej drodze podania, ekspozycji THC, tolerancji i profilu chemicznym.</p></section>';refreshHistory();
+    });
+  }
+
   function renderGraph() {
     stickyMount.innerHTML = '';
-    const rootId = 'enzyme.ache';
-    const root = conceptById.get(rootId);
-    const deps = root.dependencies.map(id => conceptById.get(id)).filter(Boolean);
-    const rels = root.related.slice(0,10).map(r => ({...r, concept: conceptById.get(r.id)})).filter(x=>x.concept);
-    const center = {x: 380, y: 320};
-    const ring1 = deps.map((c, i) => ({c, x:center.x + Math.cos((Math.PI*2*i)/Math.max(deps.length,1)-1.2)*190, y:center.y + Math.sin((Math.PI*2*i)/Math.max(deps.length,1)-1.2)*190, dep:true}));
-    const ring2 = rels.map((r, i) => ({c:r.concept, x:center.x + Math.cos((Math.PI*2*i)/Math.max(rels.length,1)+.2)*285, y:center.y + Math.sin((Math.PI*2*i)/Math.max(rels.length,1)+.2)*285, dep:false}));
-    const edges = [];
-    const nodes = [];
-    edges.push(...ring1.map(n => `<line class="graph-edge dep" x1="${center.x}" y1="${center.y}" x2="${n.x}" y2="${n.y}" />`));
-    edges.push(...ring2.map(n => `<line class="graph-edge" x1="${center.x}" y1="${center.y}" x2="${n.x}" y2="${n.y}" />`));
-    nodes.push(`<g class="graph-node" data-id="${root.id}" transform="translate(${center.x},${center.y})"><circle r="58" fill="#102019" stroke="#89f7ad"/><text text-anchor="middle" y="4">AChE</text></g>`);
-    ring1.forEach(n => nodes.push(`<g class="graph-node" data-id="${n.c.id}" transform="translate(${n.x},${n.y})"><circle r="34" fill="#18251e" stroke="#d4ff6f"/><text text-anchor="middle" y="4">${esc(abbrev(n.c.title))}</text></g>`));
-    ring2.forEach(n => nodes.push(`<g class="graph-node" data-id="${n.c.id}" transform="translate(${n.x},${n.y})"><circle r="30" fill="#181927" stroke="#9580ff"/><text text-anchor="middle" y="4">${esc(abbrev(n.c.title))}</text></g>`));
     app.innerHTML = `
-      <div class="stack">
-        <section class="page-cover card">
-          <div class="card-bg"><img class="card-bg" src="${visual('graph-page', '#89f7ad', 'MAPA')}" alt="" /></div><div class="card-shade"></div>
-          <div class="page-cover-main"><div class="kicker">Mapa wiedzy</div><h1 class="section-title">Klikalna mapa powiązań</h1><p class="section-lead">Teraz również mapa ma bardziej wyraźny, ilustrowany charakter. Zielone węzły to zależności, a fioletowe to pojęcia powiązane.</p></div>
-          <div class="page-cover-visual"><img src="${mapVisual(root)}" alt="Wizualizacja pojęcia AChE" /></div>
+      <div class="stack graph-page-stack">
+        <section class="page-cover card graph-intro-card">
+          <div class="card-bg"><img class="card-bg" src="${visual('graph-v8-3', '#89f7ad', 'MAPA WIEDZY') }" alt="" /></div><div class="card-shade"></div>
+          <div class="page-cover-main"><div class="kicker">Mapa wiedzy</div><h1 class="section-title">Mapa wiedzy — logiczne klastry</h1><p class="section-lead">Każda kategoria ma własną wyspę o rozmiarze dopasowanym do liczby pojęć. Hover tylko podpowiada. Dopiero kliknięcie aktywuje element, pokazuje jego relacje i otwiera panel po prawej.</p></div>
+          <div class="page-cover-visual"><img src="${visual('graph-v8-3-hero', '#86efff', 'CLICK → ACTIVE') }" alt="Okładka strony mapa wiedzy" /></div>
         </section>
-        <section class="graph-shell">
-          <div class="graph-canvas"><svg viewBox="0 0 860 640" preserveAspectRatio="xMidYMid meet">${edges.join('')}${nodes.join('')}</svg></div>
-          <aside class="graph-side"><div class="kicker">Fokus</div><h3>${esc(root.title)}</h3><p>${esc(textBlock(root))}</p><p>${esc(whyItMatters(root))}</p></aside>
+
+        <section id="graphExplorer" class="graph-explorer card">
+          <div class="graph-toolbar">
+            <label class="graph-control"><span>Kategoria</span><select id="graphCategory" class="filter"><option value="all">Wszystkie kategorie</option>${[...data.categories].sort((a,b)=>(a.order||0)-(b.order||0)).map(cat => `<option value="${esc(cat.id)}">${esc(cat.title)}</option>`).join('')}</select></label>
+            <label class="graph-control"><span>Kurs</span><select id="graphPath" class="filter"><option value="all">Cała baza</option>${data.learning_paths.map(path => `<option value="${esc(path.id)}">${esc(path.title)}</option>`).join('')}</select></label>
+            <div class="graph-toolbar-actions">
+              <button id="graphFit" class="button-secondary graph-tool-btn" type="button">Dopasuj</button>
+              <button id="graphReset" class="button-secondary graph-tool-btn" type="button">Reset</button>
+              <button id="graphFullscreen" class="button graph-tool-btn" type="button">Pełny ekran</button>
+            </div>
+          </div>
+
+          <div class="graph-workspace">
+            <div id="graphViewport" class="graph-viewport" tabindex="0">
+              <div class="graph-help">Tło: przeciągnij = pan • kółko = zoom • element: klik = aktywuj • podwójny klik = otwórz temat</div>
+              <svg id="graphSvg" viewBox="0 0 2400 1600" preserveAspectRatio="xMidYMid meet" aria-label="Interaktywna mapa wiedzy">
+                <defs>
+                  <filter id="nodeGlow"><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+                  <marker id="arrowDep" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="rgba(137,247,173,.88)"/></marker>
+                  <marker id="arrowPath" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="rgba(255,217,120,.92)"/></marker>
+                </defs>
+                <g id="graphCamera">
+                  <g id="graphZones" class="graph-zone-layer"></g>
+                  <g id="graphEdges" class="graph-edge-layer"></g>
+                  <g id="graphNodes" class="graph-node-layer"></g>
+                </g>
+              </svg>
+            </div>
+            <aside id="graphInfo" class="graph-info-panel"></aside>
+          </div>
         </section>
       </div>`;
-    app.querySelectorAll('.graph-node').forEach(n => n.addEventListener('click', () => location.hash = '#/concept/' + encodeURIComponent(n.dataset.id)));
+
+    const explorer = document.getElementById('graphExplorer');
+    const viewport = document.getElementById('graphViewport');
+    const svg = document.getElementById('graphSvg');
+    const camera = document.getElementById('graphCamera');
+    const zoneLayer = document.getElementById('graphZones');
+    const edgeLayer = document.getElementById('graphEdges');
+    const nodeLayer = document.getElementById('graphNodes');
+    const info = document.getElementById('graphInfo');
+    const categorySelect = document.getElementById('graphCategory');
+    const pathSelect = document.getElementById('graphPath');
+    const fitBtn = document.getElementById('graphFit');
+    const resetBtn = document.getElementById('graphReset');
+    const fullscreenBtn = document.getElementById('graphFullscreen');
+    const NS = 'http://www.w3.org/2000/svg';
+
+    let MAP_W = 2400, MAP_H = 1600;
+    let model = {nodes:[], edges:[], concepts:[], zones:[]};
+    let selectedId = null;
+    let hoveredId = null;
+    let transform = {x:0, y:0, scale:1};
+    let dragging = false;
+    let dragStart = {x:0,y:0,tx:0,ty:0};
+    let dragDistance = 0;
+    let resizeObserver = null;
+
+    const cfg = {
+      zoneW: 590,
+      zoneHeaderH: 82,
+      cellW: 170,
+      cellH: 62,
+      cols: 3,
+      padX: 28,
+      padBottom: 28,
+      gapX: 72,
+      gapY: 72,
+      outer: 64
+    };
+
+    function currentConcepts() {
+      let concepts = visibleConcepts();
+      if (pathSelect.value !== 'all') {
+        const allowed = new Set(pathById.get(pathSelect.value)?.steps || []);
+        concepts = concepts.filter(c => allowed.has(c.id));
+      }
+      if (categorySelect.value !== 'all') concepts = concepts.filter(c => c.category === categorySelect.value);
+      return concepts;
+    }
+
+    function zoneHeight(itemCount) {
+      const rows = Math.max(1, Math.ceil(itemCount / cfg.cols));
+      return cfg.zoneHeaderH + rows * cfg.cellH + cfg.padBottom + 20;
+    }
+
+    function buildModel() {
+      const concepts = currentConcepts();
+      const grouped = new Map();
+      concepts.forEach(c => { if (!grouped.has(c.category)) grouped.set(c.category, []); grouped.get(c.category).push(c); });
+      const cats = [...grouped.keys()].map(id => categoryById.get(id)).filter(Boolean).sort((a,b)=>(a.order||0)-(b.order||0));
+      const zones=[]; const nodes=[]; const edges=[]; const visibleIds=new Set(concepts.map(c=>c.id));
+
+      const viewportWide = viewport.clientWidth >= 1050;
+      const columnCount = categorySelect.value !== 'all' ? 1 : (viewportWide ? 3 : 2);
+      const colY = Array(columnCount).fill(cfg.outer);
+
+      cats.forEach((cat, catIndex) => {
+        const items = (grouped.get(cat.id) || []).slice().sort((a,b)=>a.difficulty-b.difficulty || a.title.localeCompare(b.title,'pl'));
+        const h = zoneHeight(items.length);
+        let col = 0;
+        if (columnCount > 1) {
+          col = colY.indexOf(Math.min(...colY));
+        }
+        const zx = cfg.outer + col * (cfg.zoneW + cfg.gapX);
+        const zy = colY[col];
+        colY[col] += h + cfg.gapY;
+        zones.push({id:cat.id,x:zx,y:zy,w:cfg.zoneW,h,label:cat.title,count:items.length,data:cat});
+
+        items.forEach((c,i)=>{
+          const cc=i%cfg.cols, rr=Math.floor(i/cfg.cols);
+          const x=zx+cfg.padX+cc*cfg.cellW+cfg.cellW/2;
+          const y=zy+cfg.zoneHeaderH+rr*cfg.cellH+cfg.cellH/2;
+          nodes.push({id:c.id,rawId:c.id,kind:'concept',label:c.title,category:c.category,x,y,data:c});
+        });
+      });
+
+      concepts.forEach(c => {
+        (c.dependencies||[]).forEach(dep=>{if(visibleIds.has(dep)) edges.push({from:dep,to:c.id,kind:'dependency'});});
+        (c.related||[]).slice(0,2).forEach(rel=>{if(visibleIds.has(rel.id)) edges.push({from:c.id,to:rel.id,kind:'related'});});
+      });
+      if(pathSelect.value!=='all'){
+        const steps=pathById.get(pathSelect.value)?.steps||[];
+        for(let i=0;i<steps.length-1;i++) if(visibleIds.has(steps[i])&&visibleIds.has(steps[i+1])) edges.push({from:steps[i],to:steps[i+1],kind:'path'});
+      }
+
+      const maxX = zones.length ? Math.max(...zones.map(z=>z.x+z.w)) + cfg.outer : 1200;
+      const maxY = zones.length ? Math.max(...zones.map(z=>z.y+z.h)) + cfg.outer : 800;
+      MAP_W = Math.max(1200,maxX);
+      MAP_H = Math.max(800,maxY);
+      svg.setAttribute('viewBox',`0 0 ${MAP_W} ${MAP_H}`);
+      return {nodes,edges,concepts,zones};
+    }
+
+    function createSvg(tag,attrs={}){const el=document.createElementNS(NS,tag);Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,String(v)));return el;}
+    function clippedLabel(title){return title.length>19?title.slice(0,18)+'…':title;}
+
+    function renderEmptyInfo(){
+      info.classList.remove('has-active');
+      info.innerHTML=`<div class="graph-info-empty"><div class="kicker">Aktywny element</div><h3>Nic nie jest wybrane</h3><p>Kliknij pojęcie na mapie. Hover niczego nie aktywuje — dopiero kliknięcie przypina element i jego szczegóły tutaj.</p>${graphLegendHTML()}</div>`;
+    }
+
+    function renderModel(){
+      model=buildModel();
+      zoneLayer.innerHTML=''; edgeLayer.innerHTML=''; nodeLayer.innerHTML='';
+      selectedId=null; hoveredId=null; renderEmptyInfo();
+      const byId=new Map(model.nodes.map(n=>[n.id,n]));
+      if(!model.nodes.length){info.innerHTML='<div class="kicker">Mapa</div><h3>Brak wyników</h3><p>Zmień filtry.</p>';return;}
+
+      model.zones.forEach(zone=>{
+        const g=createSvg('g',{class:'graph-zone'});
+        const rect=createSvg('rect',{x:zone.x,y:zone.y,width:zone.w,height:zone.h,rx:30,class:'graph-zone-bg',stroke:catAccent(zone.id)});
+        const accent=createSvg('rect',{x:zone.x+1,y:zone.y+1,width:8,height:zone.h-2,rx:4,class:'graph-zone-accent',fill:catAccent(zone.id)});
+        const title=createSvg('text',{x:zone.x+26,y:zone.y+34,class:'graph-zone-title'});title.textContent=zone.label;
+        const count=createSvg('text',{x:zone.x+zone.w-26,y:zone.y+34,'text-anchor':'end',class:'graph-zone-count'});count.textContent=zone.count+' pojęć';
+        const rule=createSvg('line',{x1:zone.x+26,y1:zone.y+58,x2:zone.x+zone.w-26,y2:zone.y+58,class:'graph-zone-rule'});
+        g.append(rect,accent,title,count,rule);zoneLayer.appendChild(g);
+      });
+
+      model.edges.forEach(edge=>{
+        const a=byId.get(edge.from),b=byId.get(edge.to);if(!a||!b)return;
+        const line=createSvg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'graph-edge '+edge.kind});
+        if(edge.kind==='dependency')line.setAttribute('marker-end','url(#arrowDep)');
+        if(edge.kind==='path')line.setAttribute('marker-end','url(#arrowPath)');
+        line.dataset.from=edge.from;line.dataset.to=edge.to;edgeLayer.appendChild(line);
+      });
+
+      model.nodes.forEach(node=>{
+        const g=createSvg('g',{class:'graph-node type-concept',transform:`translate(${node.x},${node.y})`,tabindex:'0'});g.dataset.id=node.id;
+        const rect=createSvg('rect',{x:-74,y:-22,width:148,height:44,rx:13,fill:'#101716',stroke:catAccent(node.category),'stroke-width':2,class:'graph-node-shape'});
+        const textEl=createSvg('text',{'text-anchor':'middle',y:5,class:'graph-node-label concept-label'});textEl.textContent=clippedLabel(node.label);
+        const title=createSvg('title');title.textContent=node.label;
+        g.append(rect,textEl,title);
+        g.addEventListener('mouseenter',()=>{hoveredId=node.id;updateHighlight();});
+        g.addEventListener('mouseleave',()=>{hoveredId=null;updateHighlight();});
+        g.addEventListener('focus',()=>{hoveredId=node.id;updateHighlight();});
+        g.addEventListener('blur',()=>{hoveredId=null;updateHighlight();});
+        g.addEventListener('click',e=>{e.stopPropagation();selectedId=node.id;updateHighlight();updateInfo(node);});
+        g.addEventListener('dblclick',e=>{e.stopPropagation();location.hash='#/concept/'+encodeURIComponent(node.rawId);});
+        nodeLayer.appendChild(g);
+      });
+      updateHighlight();requestAnimationFrame(fitToContent);
+    }
+
+    function updateHighlight(){
+      const connected=new Set();
+      if(selectedId) connected.add(selectedId);
+      edgeLayer.querySelectorAll('.graph-edge').forEach(line=>{
+        const active=!!selectedId&&(line.dataset.from===selectedId||line.dataset.to===selectedId);
+        const pathVisible=line.classList.contains('path')&&pathSelect.value!=='all';
+        line.classList.toggle('active',active);
+        line.classList.toggle('path-visible',pathVisible&&!selectedId);
+        if(active){connected.add(line.dataset.from);connected.add(line.dataset.to);}
+      });
+      nodeLayer.querySelectorAll('.graph-node').forEach(g=>{
+        const id=g.dataset.id;
+        const isSelected=!!selectedId&&id===selectedId;
+        const isHovered=!!hoveredId&&id===hoveredId;
+        const isConnected=!!selectedId&&connected.has(id)&&!isSelected;
+        g.classList.toggle('active',isSelected);
+        g.classList.toggle('hovered',isHovered&&!selectedId);
+        g.classList.toggle('connected',isConnected);
+        g.classList.toggle('dimmed',!!selectedId&&!connected.has(id));
+      });
+    }
+
+    function updateInfo(node){
+      info.classList.add('has-active');
+      const c=node.data;
+      const deps=(c.dependencies||[]).map(id=>conceptById.get(id)).filter(Boolean).slice(0,6);
+      const related=(c.related||[]).map(r=>conceptById.get(r.id)).filter(Boolean).slice(0,6);
+      info.innerHTML=`<div class="graph-active-tab"><span class="graph-active-dot" style="background:${catAccent(c.category)}"></span><span>Aktywny element</span><button id="graphClearActive" type="button" aria-label="Wyczyść aktywny element">×</button></div><div class="kicker">${esc(catTitle(c.category))}</div><h3>${esc(c.title)}</h3><p>${esc(textBlock(c))}</p><div class="graph-stat-grid"><div class="graph-stat"><strong>${c.difficulty}</strong><span>poziom</span></div><div class="graph-stat"><strong>${esc(cannabisLabel(c.cannabis_relevance))}</strong><span>cannabis</span></div><div class="graph-stat"><strong>${deps.length}</strong><span>zależności</span></div></div><div class="graph-actions-row"><a class="button" href="#/concept/${encodeURIComponent(c.id)}">Otwórz temat</a></div>${deps.length?`<div class="graph-subtitle">Najpierw poznaj</div><div class="graph-chip-list">${deps.map(d=>`<a class="graph-chip" href="#/concept/${encodeURIComponent(d.id)}">${esc(d.title)}</a>`).join('')}</div>`:''}${related.length?`<div class="graph-subtitle">Powiązane</div><div class="graph-chip-list">${related.map(d=>`<a class="graph-chip" href="#/concept/${encodeURIComponent(d.id)}">${esc(d.title)}</a>`).join('')}</div>`:''}${graphLegendHTML()}`;
+      info.querySelector('#graphClearActive')?.addEventListener('click',()=>{selectedId=null;hoveredId=null;updateHighlight();renderEmptyInfo();});
+    }
+
+    function applyTransform(){camera.setAttribute('transform',`translate(${transform.x} ${transform.y}) scale(${transform.scale})`);}
+    function resetView(){transform={x:0,y:0,scale:1};applyTransform();}
+    function fitToContent(){
+      if(!model.zones.length)return;
+      const rect=svg.getBoundingClientRect();
+      const viewAspect=rect.width/Math.max(1,rect.height);
+      const contentW=Math.max(...model.zones.map(z=>z.x+z.w))-Math.min(...model.zones.map(z=>z.x));
+      const contentH=Math.max(...model.zones.map(z=>z.y+z.h))-Math.min(...model.zones.map(z=>z.y));
+      const minX=Math.min(...model.zones.map(z=>z.x))-32,minY=Math.min(...model.zones.map(z=>z.y))-32;
+      const w=contentW+64,h=contentH+64;
+      const sx=MAP_W/w,sy=MAP_H/h;
+      const s=Math.max(.42,Math.min(2.2,Math.min(sx,sy)*.96));
+      const cx=minX+w/2,cy=minY+h/2;
+      transform={x:MAP_W/2-cx*s,y:MAP_H/2-cy*s,scale:s};applyTransform();
+    }
+
+    viewport.addEventListener('wheel',e=>{
+      e.preventDefault();const rect=svg.getBoundingClientRect();const mx=(e.clientX-rect.left)/rect.width*MAP_W,my=(e.clientY-rect.top)/rect.height*MAP_H;
+      const old=transform.scale,next=Math.max(.28,Math.min(3.4,old*(e.deltaY<0?1.12:.89)));
+      transform.x=mx-(mx-transform.x)*(next/old);transform.y=my-(my-transform.y)*(next/old);transform.scale=next;applyTransform();
+    },{passive:false});
+
+    viewport.addEventListener('pointerdown',e=>{
+      if(e.button!==0)return;
+      if(e.target.closest?.('.graph-node')) return;
+      dragging=true;dragDistance=0;viewport.setPointerCapture(e.pointerId);dragStart={x:e.clientX,y:e.clientY,tx:transform.x,ty:transform.y};viewport.classList.add('dragging');
+    });
+    viewport.addEventListener('pointermove',e=>{
+      if(!dragging)return;const rect=svg.getBoundingClientRect();const dx=(e.clientX-dragStart.x)/rect.width*MAP_W,dy=(e.clientY-dragStart.y)/rect.height*MAP_H;
+      dragDistance=Math.max(dragDistance,Math.hypot(e.clientX-dragStart.x,e.clientY-dragStart.y));transform.x=dragStart.tx+dx;transform.y=dragStart.ty+dy;applyTransform();
+    });
+    const endDrag=e=>{if(!dragging)return;dragging=false;viewport.classList.remove('dragging');try{viewport.releasePointerCapture(e.pointerId)}catch(_){} };
+    viewport.addEventListener('pointerup',endDrag);viewport.addEventListener('pointercancel',endDrag);
+    svg.addEventListener('click',e=>{
+      if(dragDistance>5)return;
+      if(e.target.closest?.('.graph-node'))return;
+      selectedId=null;hoveredId=null;updateHighlight();renderEmptyInfo();
+    });
+
+    categorySelect.addEventListener('change',renderModel);pathSelect.addEventListener('change',renderModel);
+    fitBtn.addEventListener('click',fitToContent);resetBtn.addEventListener('click',resetView);
+    fullscreenBtn.addEventListener('click',async()=>{
+      try{if(!document.fullscreenElement)await explorer.requestFullscreen?.();else await document.exitFullscreen?.();}
+      catch(_){explorer.classList.toggle('pseudo-fullscreen');}
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{renderModel();fitToContent();}));
+    });
+    const onFs=()=>{fullscreenBtn.textContent=document.fullscreenElement?'Wyjdź z pełnego':'Pełny ekran';requestAnimationFrame(()=>requestAnimationFrame(()=>{renderModel();fitToContent();}));};
+    document.addEventListener('fullscreenchange',onFs);
+    if('ResizeObserver' in window){let lastW=viewport.clientWidth;resizeObserver=new ResizeObserver(()=>{const w=viewport.clientWidth;if(Math.abs(w-lastW)>120){lastW=w;renderModel();}else requestAnimationFrame(fitToContent);});resizeObserver.observe(viewport);}
+
+    renderModel();
+    pageCleanup=()=>{document.removeEventListener('fullscreenchange',onFs);resizeObserver?.disconnect();if(document.fullscreenElement===explorer){try{document.exitFullscreen()}catch(_){}}};
   }
 
   function renderNotFound() { stickyMount.innerHTML=''; app.innerHTML = '<section class="panel empty"><h2>Nie znalazłem tej strony</h2><p>Sprawdź adres albo wróć na start.</p></section>'; }
 
   function router() {
+    runPageCleanup();
     markActiveNav();
     const [a,b] = routeParts();
     if (!a) return renderHome();
@@ -775,6 +1631,7 @@
     if (a === 'paths') return renderPaths();
     if (a === 'path') return renderPath(decodeURIComponent(b || ''));
     if (a === 'graph') return renderGraph();
+    if (a === 'profiler') return renderProfiler();
     renderNotFound();
   }
 

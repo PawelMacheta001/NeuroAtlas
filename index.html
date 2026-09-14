@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#0b0f0d" />
   <meta name="description" content="NeuroAtlas — wizualna encyklopedia neurofarmakologii i cannabis." />
-  <title>NeuroAtlas v3 — visual cannabis edition</title>
+  <title>NeuroAtlas V10 — Profiler</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -23,7 +23,7 @@
     <a class="brand" href="#/">
       <div class="brand-mark">✦</div>
       <div>
-        <div class="brand-title">NeuroAtlas <span class="version-badge">V6</span></div>
+        <div class="brand-title">NeuroAtlas <span class="version-badge">V10</span></div>
         <div class="brand-sub">wizualna baza wiedzy • mechanizm → efekt</div>
       </div>
     </a>
@@ -33,6 +33,7 @@
       <a href="#/topics">Tematy</a>
       <a href="#/paths">Kursy</a>
       <a href="#/graph">Mapa</a>
+      <a href="#/profiler">Profiler</a>
     </nav>
 
     <div class="top-actions">
@@ -42,9 +43,8 @@
       </label>
       <button id="cannabisToggle" class="top-button" aria-pressed="false">Cannabis</button>
     </div>
+    <div id="stickyProgressMount" class="course-progress-slot"></div>
   </header>
-
-  <div id="stickyProgressMount"></div>
   <div id="searchResults" class="search-results" hidden></div>
   <main id="app" class="page"></main>
 
